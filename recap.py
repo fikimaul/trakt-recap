@@ -675,22 +675,17 @@ def fit_text_width(draw, text, font_name, max_size, min_size, max_w):
     return get_font(font_name, min_size)
 
 
-def fit_text_and_truncate(draw, text, font_name, max_size, min_size, max_w):
-    size = max_size
-    while size >= min_size:
-        f = get_font(font_name, size)
-        b = draw.textbbox((0, 0), text, font=f)
-        if b[2] - b[0] <= max_w:
-            return f, text
-        size -= 1
-    f = get_font(font_name, min_size)
+def truncate_text(draw, text, font, max_w):
+    b = draw.textbbox((0, 0), text, font=font)
+    if b[2] - b[0] <= max_w:
+        return text
     cur = text
-    while len(cur) > 3:
+    while len(cur) > 1:
         cur = cur[:-1]
-        b = draw.textbbox((0, 0), cur + "...", font=f)
+        b = draw.textbbox((0, 0), cur + "...", font=font)
         if b[2] - b[0] <= max_w:
-            return f, cur + "..."
-    return f, text
+            return cur + "..."
+    return text
 
 
 # ==============================================================================
@@ -1197,8 +1192,9 @@ def render(data):
 
             # 2. Movie Title + (Year)
             label = f"{m_title} ({m_yr})" if m_yr else m_title
-            f_lbl = fit_text_width(d, label, "arialb", 22, 16, max_label_w)
-            d.text((M + 68, mry + 3), label, font=f_lbl, fill=BLACK)
+            f_lbl = get_font("arialb", 22)
+            lbl_disp = truncate_text(d, label, f_lbl, max_label_w)
+            d.text((M + 68, mry + 3), lbl_disp, font=f_lbl, fill=BLACK)
 
             # 3. Origin Country Code Badge (if available)
             tc_meta_m = data.get("tc", {}).get("meta_movies", {})
@@ -1251,8 +1247,9 @@ def render(data):
 
             # 2. Show Title + (Total Eps)
             label = f"{s_name} ({ep_count} Eps)"
-            f_title = fit_text_width(d, label, "arialb", 22, 16, max_label_w)
-            d.text((M + 68, ry + 3), label, font=f_title, fill=BLACK)
+            f_title = get_font("arialb", 22)
+            title_disp = truncate_text(d, label, f_title, max_label_w)
+            d.text((M + 68, ry + 3), title_disp, font=f_title, fill=BLACK)
 
             # 3. Origin Country Code Badge (if available)
             tc_meta_s = data.get("tc", {}).get("meta_shows", {})
@@ -1305,6 +1302,7 @@ def render(data):
         row_h_b = 52
         pill_w_col = 44
         badge_w = 32
+        f_item = get_font("arialb", 20)
 
         for col_title, items, c_start, c_end in columns:
             col_x0 = c_start
@@ -1323,7 +1321,7 @@ def render(data):
                     d.text((col_x0 + 16, ry + 16), str(i + 1),
                            font=get_font("impact", 20), fill=BLACK, anchor="mm")
 
-                    f_item, item_disp = fit_text_and_truncate(d, name, "arialb", 20, 14, max_text_w)
+                    item_disp = truncate_text(d, name, f_item, max_text_w)
                     d.text((col_x0 + badge_w + 10, ry + 3), item_disp, font=f_item, fill=BLACK)
 
                     px = col_x1 - pill_w_col
