@@ -681,7 +681,7 @@ def get_collage_items(data):
         if (not have_bg or not have_p or not have_logo) and api_key:
             endpoint = (
                 f"https://api.themoviedb.org/3/{item_type}/{tmdb_id}"
-                f"?api_key={api_key}&append_to_response=images&include_image_language=en,null,id"
+                f"?api_key={api_key}&append_to_response=images"
             )
             try:
                 req = urllib.request.Request(
@@ -700,13 +700,26 @@ def get_collage_items(data):
                         urllib.request.urlretrieve(f"https://image.tmdb.org/t/p/w780{p}", p_path)
 
                     if not have_logo:
-                        png_logos = [l["file_path"] for l in logos if l.get("file_path", "").endswith(".png")]
-                        en_png = [
-                            l["file_path"] for l in logos
-                            if l.get("file_path", "").endswith(".png") and l.get("iso_639_1") in ("en", None, "id")
-                        ]
-                        best_logo = en_png[0] if en_png else (png_logos[0] if png_logos else None)
-                        if best_logo:
+                        png_logos = [l for l in logos if l.get("file_path", "").endswith(".png")]
+                        if png_logos:
+                            orig_lang = res.get("original_language")
+                            # Priority 1: English, Indonesian, or untagged
+                            pref_logos = [
+                                l for l in png_logos
+                                if l.get("iso_639_1") in ("en", "id", None, "")
+                            ]
+                            # Priority 2: Original spoken language (e.g. ja, zh, ko, fr, etc.)
+                            orig_logos = [
+                                l for l in png_logos
+                                if orig_lang and l.get("iso_639_1") == orig_lang
+                            ]
+
+                            candidates = pref_logos if pref_logos else (orig_logos if orig_logos else png_logos)
+                            best_entry = max(
+                                candidates,
+                                key=lambda x: (x.get("vote_average", 0), x.get("vote_count", 0))
+                            )
+                            best_logo = best_entry["file_path"]
                             urllib.request.urlretrieve(f"https://image.tmdb.org/t/p/w500{best_logo}", logo_path)
             except Exception:
                 pass
