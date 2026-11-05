@@ -1,0 +1,28 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+tmdb_api_key.txt
+
+# Trakt Data & Cache
+data/*
+!data/.gitkeep
+*_cache.json
+posters/
+backdrops/
+logos/
+
+# Output
+output/*
+!output/.gitkeep
+*.png
+!assets/*.png
+
+# Python & IDE
+__pycache__/
+*.pyc
+.venv/
+venv/
+.vscode/
+.idea/
+.DS_Store
