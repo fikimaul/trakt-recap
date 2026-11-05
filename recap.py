@@ -20,6 +20,7 @@ import threading
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
+from collections import Counter, defaultdict
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -210,7 +211,7 @@ def sync_tmdb_runtimes(movies_to_check, episodes_to_check):
         seen_m.add(mid)
         smid = str(mid)
         need_rt = smid not in cache["movies"] or not cache["movies"][smid].get("runtime")
-        need_meta = smid not in cache.get("meta_movies", {})
+        need_meta = smid not in cache.get("meta_movies", {}) or "studios" not in cache["meta_movies"][smid]
         if need_rt or need_meta:
             movies_to_fetch.append((mid, smid, m.get("title", "")))
 
@@ -230,9 +231,16 @@ def sync_tmdb_runtimes(movies_to_check, episodes_to_check):
                 orig_c = d.get("origin_country", [])
                 if not orig_c:
                     orig_c = [p.get("iso_3166_1") for p in d.get("production_countries", []) if p.get("iso_3166_1")]
+                studios = [p["name"] for p in d.get("production_companies", [])[:2] if p.get("name")]
                 with lock:
                     cache["movies"][smid] = {"title": title, "runtime": rt}
-                    cache["meta_movies"][smid] = {"genres": genres, "directors": dirs, "writers": writers, "countries": orig_c}
+                    cache["meta_movies"][smid] = {
+                        "genres": genres,
+                        "directors": dirs,
+                        "writers": writers,
+                        "countries": orig_c,
+                        "studios": studios,
+                    }
                     changed = True
         except Exception:
             pass
@@ -255,7 +263,7 @@ def sync_tmdb_runtimes(movies_to_check, episodes_to_check):
                 episodes_to_fetch.append((sid, s, ep, ssid, ekey, e.get("show_title", "")))
 
         need_show_avg = ssid not in cache["show_avg"]
-        need_show_meta = ssid not in cache.get("meta_shows", {})
+        need_show_meta = ssid not in cache.get("meta_shows", {}) or "studios" not in cache["meta_shows"][ssid]
         if need_show_avg or need_show_meta:
             shows_to_fetch.add((sid, ssid))
 
@@ -292,9 +300,17 @@ def sync_tmdb_runtimes(movies_to_check, episodes_to_check):
                 orig_c = d.get("origin_country", [])
                 if not orig_c:
                     orig_c = [p.get("iso_3166_1") for p in d.get("production_countries", []) if p.get("iso_3166_1")]
+                studios = [p["name"] for p in d.get("production_companies", [])[:2] if p.get("name")]
                 with lock:
                     cache["show_avg"][ssid] = avg
-                    cache["meta_shows"][ssid] = {"genres": genres, "creators": cb, "directors": dirs, "writers": writers, "countries": orig_c}
+                    cache["meta_shows"][ssid] = {
+                        "genres": genres,
+                        "creators": cb,
+                        "directors": dirs,
+                        "writers": writers,
+                        "countries": orig_c,
+                        "studios": studios,
+                    }
                     changed = True
         except Exception:
             pass
@@ -441,13 +457,21 @@ def gather(year, month=None, username=None):
     by_day_minutes = {}
     by_day_counts = {}
 
+    by_month_counts = Counter()
+    by_month_minutes = Counter()
+    by_month_days = defaultdict(set)
+
     for m in movies:
         mid = str(m["movie"]["ids"].get("tmdb"))
         rt = tc.get("movies", {}).get(mid, {}).get("runtime") or 0
         total_minutes += rt
-        d = to_wib(m["watched_at"]).day
+        dt_m = to_wib(m["watched_at"])
+        d = dt_m.day
         by_day_minutes[d] = by_day_minutes.get(d, 0) + rt
         by_day_counts[d] = by_day_counts.get(d, 0) + 1
+        by_month_counts[dt_m.month] += 1
+        by_month_minutes[dt_m.month] += rt
+        by_month_days[dt_m.month].add(d)
 
     for e in eps:
         sid = str(e["show"]["ids"].get("tmdb"))
@@ -457,18 +481,22 @@ def gather(year, month=None, username=None):
         if not rt:
             rt = tc.get("show_avg", {}).get(sid) or 0
         total_minutes += rt
-        d = to_wib(e["watched_at"]).day
+        dt_e = to_wib(e["watched_at"])
+        d = dt_e.day
         by_day_minutes[d] = by_day_minutes.get(d, 0) + rt
         by_day_counts[d] = by_day_counts.get(d, 0) + 1
+        by_month_counts[dt_e.month] += 1
+        by_month_minutes[dt_e.month] += rt
+        by_month_days[dt_e.month].add(d)
 
     # Average rating
     all_month_ratings = [r["rating"] for r in rate if "rating" in r]
     avg_rate = sum(all_month_ratings) / len(all_month_ratings) if all_month_ratings else 0
 
-    # Top 5 Genres & Top 5 Origin Countries (grouped by show)
-    from collections import Counter
+    # Top 5 Genres, Top 5 Studios & Top 5 Origin Countries (grouped by show)
     genre_counter = Counter()
     country_counter = Counter()
+    studio_counter = Counter()
     creator_counter = Counter()
     meta_m = tc.get("meta_movies", {})
     meta_s = tc.get("meta_shows", {})
@@ -482,6 +510,8 @@ def gather(year, month=None, username=None):
         for c in mm.get("countries", []):
             c_name = COUNTRY_NAMES.get(c, c)
             country_counter[c_name] += 1
+        for s in mm.get("studios", []):
+            studio_counter[s] += 1
         c_people = list(dict.fromkeys(mm.get("directors", []) + mm.get("writers", [])))
         for p in c_people:
             creator_counter[p] += 1
@@ -495,6 +525,8 @@ def gather(year, month=None, username=None):
         for c in sm.get("countries", []):
             c_name = COUNTRY_NAMES.get(c, c)
             country_counter[c_name] += 1
+        for s in sm.get("studios", []):
+            studio_counter[s] += 1
         s_people = sm.get("creators", [])
         if not s_people:
             s_people = sm.get("writers", [])[:2] or sm.get("directors", [])[:2]
@@ -504,7 +536,18 @@ def gather(year, month=None, username=None):
 
     top_genres = genre_counter.most_common(5)
     top_countries = country_counter.most_common(5)
+    top_studios = studio_counter.most_common(5)
     top_creators = creator_counter.most_common(5)
+
+    peak_month = None
+    if is_yearly and by_month_counts:
+        pm = max(by_month_counts.keys(), key=lambda x: (by_month_counts[x], by_month_minutes[x]))
+        peak_month = {
+            "month": pm,
+            "watches": by_month_counts[pm],
+            "minutes": by_month_minutes[pm],
+            "active_days": len(by_month_days[pm]),
+        }
 
     return {
         "is_yearly": is_yearly,
@@ -520,7 +563,9 @@ def gather(year, month=None, username=None):
         "top_movies": top_movies,
         "top_genres": top_genres,
         "top_countries": top_countries,
+        "top_studios": top_studios,
         "top_creators": top_creators,
+        "peak_month": peak_month,
         "by_day_minutes": by_day_minutes,
         "by_day_counts": by_day_counts,
         "avg_rating": avg_rate,
@@ -628,6 +673,24 @@ def fit_text_width(draw, text, font_name, max_size, min_size, max_w):
             return f
         size -= 2
     return get_font(font_name, min_size)
+
+
+def fit_text_and_truncate(draw, text, font_name, max_size, min_size, max_w):
+    size = max_size
+    while size >= min_size:
+        f = get_font(font_name, size)
+        b = draw.textbbox((0, 0), text, font=f)
+        if b[2] - b[0] <= max_w:
+            return f, text
+        size -= 1
+    f = get_font(font_name, min_size)
+    cur = text
+    while len(cur) > 3:
+        cur = cur[:-1]
+        b = draw.textbbox((0, 0), cur + "...", font=f)
+        if b[2] - b[0] <= max_w:
+            return f, cur + "..."
+    return f, text
 
 
 # ==============================================================================
@@ -964,15 +1027,19 @@ def render(data):
     m_colors = [CORAL_TRANSPARENT, YELLOW_TRANSPARENT, CYAN_TRANSPARENT, LIME_TRANSPARENT, PURPLE_TRANSPARENT]
     pill_w = 98
     pill_x0 = W - M - 24 - pill_w
-    max_label_w = BW - 32 - 12 - pill_w - 24
+    c_badge_w = 46
+    c_badge_x = pill_x0 - c_badge_w - 10
+    max_label_w = c_badge_x - (M + 68) - 12
 
     if is_yearly:
-        mov_y = grid_y + grid_h + 20   # 688
+        strip_y = grid_y + grid_h + 24   # 692
+        strip_h = 66
+        mov_y = strip_y + strip_h + 24   # 782
         mov_h = 340
-        shows_y = mov_y + mov_h + 20   # 1048
+        shows_y = mov_y + mov_h + 24     # 1146
         shows_h = 340
-        bottom_y = shows_y + shows_h + 20  # 1408
-        bottom_h = 384
+        bottom_y = shows_y + shows_h + 24 # 1510
+        bottom_h = 340
     else:
         chart_box_y = grid_y + grid_h + 20  # 688
         chart_box_h = 384
@@ -1069,6 +1136,42 @@ def render(data):
             d.text((bx0 + col_w // 2, by0 + cell_h // 2 + 1), label_text,
                    font=cnt_font, fill=text_col, anchor="mm")
 
+    # 5.5 PEAK MONTH STRIP (Yearly Mode Only)
+    if is_yearly and data.get("peak_month"):
+        pm_data = data["peak_month"]
+        strip_box = [M, strip_y, W - M, strip_y + strip_h]
+        draw_brutal_box(d, strip_box, fill=WHITE_TRANSPARENT, outline=BLACK, width=BORDER,
+                        shadow_offset=(8, 8), radius=14)
+
+        cy = strip_y + strip_h // 2
+        tag_w = 148
+        tag_box = [M + 24, strip_y + 14, M + 24 + tag_w, strip_y + strip_h - 14]
+        draw_brutal_box(d, tag_box, fill=CORAL_TRANSPARENT, outline=BLACK, width=2,
+                        shadow_offset=(2, 2), radius=8)
+        d.text((tag_box[0] + tag_w // 2, cy), "PEAK MONTH",
+               font=get_font("impact", 20), fill=BLACK, anchor="mm")
+
+        m_name = MONTH_NAMES.get(pm_data["month"], "MONTH")
+        d.text((tag_box[2] + 16, cy), m_name,
+               font=get_font("impact", 30), fill=BLACK, anchor="lm")
+
+        pills = [
+            (f"{pm_data['watches']} WATCHES", YELLOW_TRANSPARENT),
+            (f"{pm_data['minutes'] // 60}h {pm_data['minutes'] % 60}m", CYAN_TRANSPARENT),
+            (f"{pm_data['active_days']} ACTIVE DAYS", LIME_TRANSPARENT),
+        ]
+        cur_rx = W - M - 24
+        f_pill = get_font("impact", 17)
+        for p_text, p_bg in reversed(pills):
+            p_bbox = d.textbbox((0, 0), p_text, font=f_pill)
+            pw = (p_bbox[2] - p_bbox[0]) + 20
+            p_bx0 = cur_rx - pw
+            p_box = [p_bx0, strip_y + 14, cur_rx, strip_y + strip_h - 14]
+            draw_brutal_box(d, p_box, fill=p_bg, outline=BLACK, width=2,
+                            shadow_offset=(2, 2), radius=6)
+            d.text((p_bx0 + pw // 2, cy), p_text, font=f_pill, fill=BLACK, anchor="mm")
+            cur_rx = p_bx0 - 10
+
     # 6. TOP MOVIES (Fixed 5 Slots, Rank on Left, Runtime on Right)
     m_box = [M, mov_y, W - M, mov_y + mov_h]
     draw_brutal_box(d, m_box, fill=WHITE_TRANSPARENT, outline=BLACK, width=BORDER,
@@ -1084,7 +1187,7 @@ def render(data):
     for i in range(5):
         mry = m_row_start + i * m_row_h
         if i < len(top_m):
-            m_title, m_runtime, m_rate, m_yr, _ = top_m[i]
+            m_title, m_runtime, m_rate, m_yr, m_mid = top_m[i]
 
             # 1. Rank Badge (Left)
             badge_box = [M + 24, mry, M + 24 + 32, mry + 32]
@@ -1097,7 +1200,18 @@ def render(data):
             f_lbl = fit_text_width(d, label, "arialb", 22, 16, max_label_w)
             d.text((M + 68, mry + 3), label, font=f_lbl, fill=BLACK)
 
-            # 3. Total Runtime (Right Pill)
+            # 3. Origin Country Code Badge (if available)
+            tc_meta_m = data.get("tc", {}).get("meta_movies", {})
+            m_countries = tc_meta_m.get(str(m_mid), {}).get("countries", [])
+            m_ccode = m_countries[0].upper() if m_countries and m_countries[0] else ""
+            if m_ccode:
+                c_pill_box = [c_badge_x, mry, c_badge_x + c_badge_w, mry + 34]
+                draw_brutal_box(d, c_pill_box, fill=WHITE_TRANSPARENT, outline=BLACK, width=2,
+                                shadow_offset=(3, 3), radius=8)
+                d.text((c_badge_x + c_badge_w // 2, mry + 17), m_ccode,
+                       font=get_font("impact", 18), fill=BLACK, anchor="mm")
+
+            # 4. Total Runtime (Right Pill)
             h = m_runtime // 60
             rem_m = m_runtime % 60
             runtime_str = f"{h}h {rem_m:02d}m"
@@ -1127,7 +1241,7 @@ def render(data):
     for i in range(5):
         ry = row_start_y + i * row_height
         if i < len(top_shows):
-            s_name, s_runtime, ep_count, _ = top_shows[i]
+            s_name, s_runtime, ep_count, s_sid = top_shows[i]
 
             # 1. Rank Badge (Left)
             badge_box = [M + 24, ry, M + 24 + 32, ry + 32]
@@ -1140,7 +1254,18 @@ def render(data):
             f_title = fit_text_width(d, label, "arialb", 22, 16, max_label_w)
             d.text((M + 68, ry + 3), label, font=f_title, fill=BLACK)
 
-            # 3. Total Runtime (Right Pill)
+            # 3. Origin Country Code Badge (if available)
+            tc_meta_s = data.get("tc", {}).get("meta_shows", {})
+            s_countries = tc_meta_s.get(str(s_sid), {}).get("countries", [])
+            s_ccode = s_countries[0].upper() if s_countries and s_countries[0] else ""
+            if s_ccode:
+                c_pill_box = [c_badge_x, ry, c_badge_x + c_badge_w, ry + 34]
+                draw_brutal_box(d, c_pill_box, fill=WHITE_TRANSPARENT, outline=BLACK, width=2,
+                                shadow_offset=(3, 3), radius=8)
+                d.text((c_badge_x + c_badge_w // 2, ry + 17), s_ccode,
+                       font=get_font("impact", 18), fill=BLACK, anchor="mm")
+
+            # 4. Total Runtime (Right Pill)
             h = s_runtime // 60
             rem_m = s_runtime % 60
             runtime_str = f"{h}h {rem_m:02d}m"
@@ -1154,75 +1279,62 @@ def render(data):
             if i < 4 and i < len(top_shows) - 1:
                 d.line([(M + 24, ry + 44), (W - M - 24, ry + 44)], fill=GRAY_BAR, width=2)
 
-    # 8. YEARLY MODE: TOP GENRES & TOP COUNTRIES (2 Columns)
+    # 8. YEARLY MODE: TOP GENRES, TOP STUDIOS & TOP COUNTRIES (3 Columns)
     if is_yearly:
         b_box = [M, bottom_y, W - M, bottom_y + bottom_h]
         draw_brutal_box(d, b_box, fill=WHITE_TRANSPARENT, outline=BLACK, width=BORDER,
                         shadow_offset=(8, 8), radius=16)
 
-        mid_x = W // 2  # 540
-        d.line([(mid_x, bottom_y + 16), (mid_x, bottom_y + bottom_h - 16)], fill=BLACK, width=2)
+        inner_x0 = M + 24
+        inner_x1 = W - M - 24
+        inner_w = inner_x1 - inner_x0  # 904 px
+        col_w = inner_w // 3           # 301 px
 
-        # Column 1: TOP GENRES
-        col1_x0 = M + 24
-        col1_x1 = mid_x - 24
-        d.text((col1_x0, bottom_y + 20), "TOP GENRES", font=get_font("impact", 26), fill=BLACK)
+        div1_x = inner_x0 + col_w      # 389
+        div2_x = inner_x0 + col_w * 2  # 690
+        d.line([(div1_x, bottom_y + 16), (div1_x, bottom_y + bottom_h - 16)], fill=BLACK, width=2)
+        d.line([(div2_x, bottom_y + 16), (div2_x, bottom_y + bottom_h - 16)], fill=BLACK, width=2)
 
-        top_genres = data.get("top_genres", [])[:5]
+        columns = [
+            ("TOP GENRES", data.get("top_genres", [])[:5], inner_x0, div1_x - 14),
+            ("TOP STUDIOS", data.get("top_studios", [])[:5], div1_x + 14, div2_x - 14),
+            ("TOP COUNTRIES", data.get("top_countries", [])[:5], div2_x + 14, inner_x1),
+        ]
+
         row_start_b = bottom_y + 64
-        row_h_b = 56
-        pill_w_col = 58
-        max_g_w = (col1_x1 - col1_x0) - 32 - 12 - pill_w_col - 12
+        row_h_b = 52
+        pill_w_col = 44
+        badge_w = 32
 
-        for i in range(5):
-            ry = row_start_b + i * row_h_b
-            if i < len(top_genres):
-                g_name, g_cnt = top_genres[i]
-                badge_box = [col1_x0, ry, col1_x0 + 28, ry + 28]
-                draw_brutal_box(d, badge_box, fill=m_colors[i], outline=BLACK, width=2,
-                                shadow_offset=(2, 2), radius=6)
-                d.text((col1_x0 + 14, ry + 14), str(i + 1), font=get_font("impact", 18), fill=BLACK, anchor="mm")
+        for col_title, items, c_start, c_end in columns:
+            col_x0 = c_start
+            col_x1 = c_end
+            d.text((col_x0, bottom_y + 20), col_title, font=get_font("impact", 28), fill=BLACK)
 
-                f_g = fit_text_width(d, g_name, "arialb", 18, 14, max_g_w)
-                d.text((col1_x0 + 38, ry + 3), g_name, font=f_g, fill=BLACK)
+            max_text_w = (col_x1 - col_x0) - badge_w - 10 - pill_w_col - 8
 
-                px = col1_x1 - pill_w_col
-                pill_box = [px, ry, px + pill_w_col, ry + 28]
-                draw_brutal_box(d, pill_box, fill=m_colors[i], outline=BLACK, width=2,
-                                shadow_offset=(2, 2), radius=6)
-                d.text((px + pill_w_col // 2, ry + 14), str(g_cnt), font=get_font("impact", 18), fill=BLACK, anchor="mm")
+            for i in range(5):
+                ry = row_start_b + i * row_h_b
+                if i < len(items):
+                    name, cnt = items[i]
+                    badge_box = [col_x0, ry, col_x0 + badge_w, ry + badge_w]
+                    draw_brutal_box(d, badge_box, fill=m_colors[i], outline=BLACK, width=2,
+                                    shadow_offset=(2, 2), radius=6)
+                    d.text((col_x0 + 16, ry + 16), str(i + 1),
+                           font=get_font("impact", 20), fill=BLACK, anchor="mm")
 
-                if i < 4 and i < len(top_genres) - 1:
-                    d.line([(col1_x0, ry + 42), (col1_x1, ry + 42)], fill=GRAY_BAR, width=1)
+                    f_item, item_disp = fit_text_and_truncate(d, name, "arialb", 20, 14, max_text_w)
+                    d.text((col_x0 + badge_w + 10, ry + 3), item_disp, font=f_item, fill=BLACK)
 
-        # Column 2: TOP COUNTRIES
-        col2_x0 = mid_x + 24
-        col2_x1 = W - M - 24
-        d.text((col2_x0, bottom_y + 20), "TOP COUNTRIES", font=get_font("impact", 26), fill=BLACK)
+                    px = col_x1 - pill_w_col
+                    pill_box = [px, ry, px + pill_w_col, ry + 34]
+                    draw_brutal_box(d, pill_box, fill=m_colors[i], outline=BLACK, width=2,
+                                    shadow_offset=(2, 2), radius=6)
+                    d.text((px + pill_w_col // 2, ry + 17), str(cnt),
+                           font=get_font("impact", 20), fill=BLACK, anchor="mm")
 
-        top_countries = data.get("top_countries", [])[:5]
-        max_c_w = (col2_x1 - col2_x0) - 32 - 12 - pill_w_col - 12
-
-        for i in range(5):
-            ry = row_start_b + i * row_h_b
-            if i < len(top_countries):
-                c_name, c_cnt = top_countries[i]
-                badge_box = [col2_x0, ry, col2_x0 + 28, ry + 28]
-                draw_brutal_box(d, badge_box, fill=m_colors[i], outline=BLACK, width=2,
-                                shadow_offset=(2, 2), radius=6)
-                d.text((col2_x0 + 14, ry + 14), str(i + 1), font=get_font("impact", 18), fill=BLACK, anchor="mm")
-
-                f_c = fit_text_width(d, c_name, "arialb", 18, 14, max_c_w)
-                d.text((col2_x0 + 38, ry + 3), c_name, font=f_c, fill=BLACK)
-
-                px = col2_x1 - pill_w_col
-                pill_box = [px, ry, px + pill_w_col, ry + 28]
-                draw_brutal_box(d, pill_box, fill=m_colors[i], outline=BLACK, width=2,
-                                shadow_offset=(2, 2), radius=6)
-                d.text((px + pill_w_col // 2, ry + 14), str(c_cnt), font=get_font("impact", 18), fill=BLACK, anchor="mm")
-
-                if i < 4 and i < len(top_countries) - 1:
-                    d.line([(col2_x0, ry + 42), (col2_x1, ry + 42)], fill=GRAY_BAR, width=1)
+                    if i < 4 and i < len(items) - 1:
+                        d.line([(col_x0, ry + 44), (col_x1, ry + 44)], fill=GRAY_BAR, width=2)
 
     final_img = Image.alpha_composite(canvas, overlay)
     return final_img.convert("RGB")
@@ -1293,8 +1405,13 @@ def main():
     if data["top_shows"]:
         print(f"Top 1 Show     : {data['top_shows'][0][0]} ({data['top_shows'][0][1]}m, {data['top_shows'][0][2]} eps)")
     if data["is_yearly"]:
+        if data.get("peak_month"):
+            pm = data["peak_month"]
+            print(f"Peak Month     : {MONTH_NAMES.get(pm['month'], '')} ({pm['watches']} watches, {pm['minutes'] // 60}h {pm['minutes'] % 60}m, {pm['active_days']} active days)")
         if data.get("top_genres"):
             print(f"Top 1 Genre    : {data['top_genres'][0][0]} ({data['top_genres'][0][1]} titles)")
+        if data.get("top_studios"):
+            print(f"Top 1 Studio   : {data['top_studios'][0][0]} ({data['top_studios'][0][1]} titles)")
         if data.get("top_countries"):
             print(f"Top 1 Country  : {data['top_countries'][0][0]} ({data['top_countries'][0][1]} titles)")
 

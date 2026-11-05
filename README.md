@@ -2,7 +2,7 @@
 
 A dynamic **1080x1920 PNG** Instagram Story infographic generator with a bold **Neo-Brutalism** design aesthetic, built to visualize movie and TV show watch histories exported from [Trakt.tv](https://trakt.tv).
 
-Supports both **Monthly Recap** mode (with an interactive daily watch minutes calendar heatmap) and **Yearly Recap** mode (featuring Top Genres and Top Countries analytics).
+Supports both **Monthly Recap** mode (with an interactive daily watch minutes calendar heatmap) and **Yearly Recap** mode (featuring Top Genres, Top Studios, and Top Countries analytics).
 
 ---
 
@@ -19,7 +19,8 @@ Supports both **Monthly Recap** mode (with an interactive daily watch minutes ca
 - **1-Slide Instagram Story (1080x1920)**: 9:16 aspect ratio optimized for Instagram Stories, TikTok, and messaging status updates.
 - **Two Distinct Report Modes**:
   - **Monthly Mode (`--period=YYYY-MM`)**: Displays total watches, total time (hours and minutes), movie/episode/show counts, average rating, Top 5 Movies, Top 5 Shows, and a dynamic **Daily Watched Minutes Heatmap Calendar**.
-  - **Yearly Mode (`--period=YYYY`)**: Lifts movie and TV rankings upward; the bottom card presents 2-column annual analytics: **TOP GENRES** and **TOP COUNTRIES** (grouped per title).
+  - **Yearly Mode (`--period=YYYY`)**: Features a dedicated **PEAK MONTH** banner (highlighting watch volume, total duration, and active days) and a uniform 3-column annual analytics card: **TOP GENRES**, **TOP STUDIOS**, and **TOP COUNTRIES** (grouped per title).
+- **Origin Country Code Badges**: Compact ISO country code badge (`US`, `JP`, `ID`, `GB`, etc.) displayed alongside total runtime pills for Top Movies and Top TV Shows.
 - **Cinematic 2x5 Collage Background**:
   - 10-cell grid featuring official **TMDB Landscape Backdrops** for the Top 5 Movies and Top 5 TV Shows.
   - **Official Transparent PNG Logos**: Centered over each cell with a soft drop shadow.
