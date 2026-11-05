@@ -8,7 +8,7 @@ Supports both **Monthly Recap** mode (with an interactive daily watch minutes ca
 
 ## Sample Reports
 
-| Monthly Recap (`--period=2026-10`) | Yearly Recap (`--period=2026`) |
+| Monthly Recap (`--period=2026-10`) | Yearly Recap (`--period=2025`) |
 | :---: | :---: |
 | <img src="assets/sample-monthly.png" alt="Monthly Recap Sample" width="400" /> | <img src="assets/sample-yearly.png" alt="Yearly Recap Sample" width="400" /> |
 
@@ -41,7 +41,7 @@ Supports both **Monthly Recap** mode (with an interactive daily watch minutes ca
 ## Directory Structure
 
 ```text
-trakt-export/
+trakt-recap/
 ├── .env.example              # Environment variable configuration template
 ├── .gitignore                # Git ignore rules for data, cache, and secrets
 ├── README.md                 # Project documentation
@@ -76,8 +76,8 @@ trakt-export/
 
 ### 2. Clone Repository & Install Dependencies
 ```bash
-git clone <your-repo-url>
-cd trakt-export-fikimaul
+git clone https://github.com/fikimaul/trakt-recap.git
+cd trakt-recap
 
 # Create virtual environment (optional but recommended)
 python -m venv venv

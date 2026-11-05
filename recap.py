@@ -460,6 +460,7 @@ def gather(year, month=None, username=None):
     by_month_counts = Counter()
     by_month_minutes = Counter()
     by_month_days = defaultdict(set)
+    active_dates = set()
 
     for m in movies:
         mid = str(m["movie"]["ids"].get("tmdb"))
@@ -472,6 +473,7 @@ def gather(year, month=None, username=None):
         by_month_counts[dt_m.month] += 1
         by_month_minutes[dt_m.month] += rt
         by_month_days[dt_m.month].add(d)
+        active_dates.add(dt_m.date())
 
     for e in eps:
         sid = str(e["show"]["ids"].get("tmdb"))
@@ -488,6 +490,21 @@ def gather(year, month=None, username=None):
         by_month_counts[dt_e.month] += 1
         by_month_minutes[dt_e.month] += rt
         by_month_days[dt_e.month].add(d)
+        active_dates.add(dt_e.date())
+
+    # Calculate longest watch streak in consecutive days
+    sorted_dates = sorted(active_dates)
+    longest_streak = 0
+    cur_streak = 0
+    prev_date = None
+    for d_val in sorted_dates:
+        if prev_date is None or d_val == prev_date + timedelta(days=1):
+            cur_streak += 1
+        else:
+            cur_streak = 1
+        if cur_streak > longest_streak:
+            longest_streak = cur_streak
+        prev_date = d_val
 
     # Average rating
     all_month_ratings = [r["rating"] for r in rate if "rating" in r]
@@ -558,7 +575,8 @@ def gather(year, month=None, username=None):
         "movies": len(movies),
         "episodes": len(eps),
         "shows": len(shows_eps),
-        "active_days": len(by_day_counts),
+        "active_days": len(active_dates),
+        "longest_streak": longest_streak,
         "top_shows": top_shows,
         "top_movies": top_movies,
         "top_genres": top_genres,
@@ -933,13 +951,16 @@ def render(data):
     M = 64
     BW = W - 2 * M  # 952 px
 
-    # 1. TOP BAR: Header Strip
-    t_box = [M, 80, W - M, 144]
+    is_yearly = data.get("is_yearly", False)
+
+    # 1. TOP BAR: Header Strip (Equalized top and bottom margins for both modes)
+    top_y = 68 if is_yearly else 90
+    header_h = 64
+    t_box = [M, top_y, W - M, top_y + header_h]
     draw_brutal_box(d, t_box, fill=YELLOW_TRANSPARENT, outline=BLACK, width=4,
                     shadow_offset=(6, 6), radius=12)
 
     box_center_y = (t_box[1] + t_box[3]) / 2
-    is_yearly = data.get("is_yearly", False)
     top_label = "TRAKT.TV YEARLY RECAP" if is_yearly else "TRAKT.TV MONTHLY RECAP"
     d.text((M + 24, box_center_y), top_label,
            font=get_font("impact", 32), fill=BLACK, anchor="lm")
@@ -954,7 +975,7 @@ def render(data):
         title_text = f"YEAR {data['year']}"
     else:
         title_text = f"{MONTH_NAMES.get(data['month'], 'MONTH')} {data['year']}"
-    title_y = 164
+    title_y = t_box[3] + 20
     d.text((M + 3, title_y + 3), title_text, font=get_font("impact", 112), fill=(255, 255, 255, 200))
     d.text((M, title_y), title_text, font=get_font("impact", 112), fill=BLACK)
 
@@ -979,10 +1000,13 @@ def render(data):
     f_tot = get_font("impact", 136 if len(tot_str) <= 2 else (124 if len(tot_str) == 3 else 108))
     d.text((M + 24, hero_y + 36), tot_str, font=f_tot, fill=BLACK)
     bbox_tot = d.textbbox((M + 24, hero_y + 36), tot_str, font=f_tot)
-    watches_x = max(M + 210, bbox_tot[2] + 16)
-    d.text((watches_x, hero_y + 78), "WATCHES", font=get_font("impact", 48), fill=BLACK)
-    d.text((watches_x, hero_y + 134), f"{data['movies']} MOVIES · {data['episodes']} EPS",
-           font=get_font("arialb", 20), fill=BLACK)
+    watches_x = max(M + 200, bbox_tot[2] + 16)
+    d.text((watches_x, hero_y + 64), "WATCHES", font=get_font("impact", 44), fill=BLACK)
+    f_sub = get_font("arialb", 19)
+    m_label = f"{data['movies']} {'MOVIE' if data['movies'] == 1 else 'MOVIES'}"
+    s_label = f"{data['episodes']} EPS OF {data['shows']} {'SHOW' if data['shows'] == 1 else 'SHOWS'}"
+    d.text((watches_x, hero_y + 124), m_label, font=f_sub, fill=BLACK)
+    d.text((watches_x, hero_y + 154), s_label, font=f_sub, fill=BLACK)
 
     # Right Box: TOTAL TIME
     box_right = [M + w_left + gap, hero_y, W - M, hero_y + hero_h]
@@ -998,15 +1022,28 @@ def render(data):
     d.text((box_right[0] + 24, hero_y + 152), f"={tot_min:,} MINUTES",
            font=get_font("mono", 30), fill=BLACK)
 
-    # 4. STAT CARDS GRID (Movies, Episodes, Shows, Avg Rating)
+    # 4. STAT CARDS GRID (Active Days, Daily Avg, Longest Streak, Avg Rating)
     grid_y = hero_y + hero_h + 20  # 564
     grid_h = 104
     col_w = (BW - 3 * 16) // 4
+
+    active_days = data.get("active_days", 0)
+    daily_min = data["total_minutes"] // active_days if active_days > 0 else 0
+    if daily_min >= 60:
+        h = daily_min // 60
+        m = daily_min % 60
+        daily_avg_str = f"{h}h {m}m" if m > 0 else f"{h}h"
+    else:
+        daily_avg_str = f"{daily_min}m"
+
+    streak_str = f"{data.get('longest_streak', 0)}d"
+    rating_str = f"{data['avg_rating']:.1f}" if data.get("avg_rating") else "0.0"
+
     stats_data = [
-        (str(data["movies"]), "MOVIES", WHITE_TRANSPARENT),
-        (str(data["episodes"]), "EPISODES", YELLOW_TRANSPARENT),
-        (str(data["shows"]), "SHOWS", WHITE_TRANSPARENT),
-        (f"{data['avg_rating']:.1f}" if data['avg_rating'] else "0.0", "AVG RATING", CORAL_TRANSPARENT),
+        (str(active_days), "ACTIVE DAYS", WHITE_TRANSPARENT),
+        (daily_avg_str, "DAILY AVG", YELLOW_TRANSPARENT),
+        (streak_str, "LONGEST STREAK", WHITE_TRANSPARENT),
+        (rating_str, "AVG RATING", CORAL_TRANSPARENT),
     ]
     for i, (val, label, bg_col) in enumerate(stats_data):
         cx0 = M + i * (col_w + 16)
@@ -1027,20 +1064,20 @@ def render(data):
     max_label_w = c_badge_x - (M + 68) - 12
 
     if is_yearly:
-        strip_y = grid_y + grid_h + 24   # 692
+        strip_y = grid_y + grid_h + 24
         strip_h = 66
-        mov_y = strip_y + strip_h + 24   # 782
+        mov_y = strip_y + strip_h + 24
         mov_h = 340
-        shows_y = mov_y + mov_h + 24     # 1146
+        shows_y = mov_y + mov_h + 24
         shows_h = 340
-        bottom_y = shows_y + shows_h + 24 # 1510
+        bottom_y = shows_y + shows_h + 24
         bottom_h = 340
     else:
-        chart_box_y = grid_y + grid_h + 20  # 688
+        chart_box_y = grid_y + grid_h + 24
         chart_box_h = 384
-        mov_y = chart_box_y + chart_box_h + 20  # 1092
+        mov_y = chart_box_y + chart_box_h + 24
         mov_h = 340
-        shows_y = mov_y + mov_h + 20  # 1452
+        shows_y = mov_y + mov_h + 24
         shows_h = 340
 
     # 5. DAILY WATCHED MINUTES (Monthly Mode Only)
@@ -1232,7 +1269,7 @@ def render(data):
     top_shows = data["top_shows"][:5]
     row_start_y = shows_y + 64
     row_height = 52
-    colors = [CORAL_TRANSPARENT, YELLOW_TRANSPARENT, CYAN_TRANSPARENT, PURPLE_TRANSPARENT, LIME_TRANSPARENT]
+    colors = m_colors
 
     for i in range(5):
         ry = row_start_y + i * row_height
@@ -1398,6 +1435,7 @@ def main():
     print(f"Total Watches  : {data['total']} ({data['movies']} Movies, {data['episodes']} Episodes)")
     print(f"Total Time     : {data['total_minutes'] // 60}h {data['total_minutes'] % 60}m ({data['total_minutes']:,} minutes)")
     print(f"Active Days    : {data['active_days']} days")
+    print(f"Longest Streak : {data['longest_streak']} days")
     if data["top_movies"]:
         print(f"Top 1 Movie    : {data['top_movies'][0][0]} ({data['top_movies'][0][1]}m)")
     if data["top_shows"]:
