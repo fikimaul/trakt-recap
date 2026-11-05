@@ -45,12 +45,12 @@ POSTER_FALLBACK = os.path.join(BASE, "top1_poster.jpg")
 W, H = 1080, 1920
 WIB = timezone(timedelta(hours=7))
 
-FONTS_DIR = "C:\\Windows\\Fonts"
+FONTS_DIR = os.path.join(BASE, "fonts")
 FONT_FILES = {
-    "impact": os.path.join(FONTS_DIR, "impact.ttf"),
-    "arialb": os.path.join(FONTS_DIR, "arialbd.ttf"),
-    "bahnschrift": os.path.join(FONTS_DIR, "bahnschrift.ttf"),
-    "mono": os.path.join(FONTS_DIR, "consola.ttf"),
+    "impact": os.path.join(FONTS_DIR, "Anton-Regular.ttf"),
+    "arialb": os.path.join(FONTS_DIR, "Barlow-Bold.ttf"),
+    "bahnschrift": os.path.join(FONTS_DIR, "Barlow-SemiBold.ttf"),
+    "mono": os.path.join(FONTS_DIR, "SpaceMono-Bold.ttf"),
 }
 _fcache = {}
 
@@ -883,13 +883,17 @@ def render(data):
         title_text = f"YEAR {data['year']}"
     else:
         title_text = f"{MONTH_NAMES.get(data['month'], 'MONTH')} {data['year']}"
-    title_y = 172
+    title_y = 164
     d.text((M + 3, title_y + 3), title_text, font=get_font("impact", 112), fill=(255, 255, 255, 200))
     d.text((M, title_y), title_text, font=get_font("impact", 112), fill=BLACK)
-    d.line([(M, title_y + 130), (W - M, title_y + 130)], fill=BLACK, width=5)
+
+    # Dynamic line position calculated from actual text bounding box with clean breathing room
+    b_title = d.textbbox((M, title_y), title_text, font=get_font("impact", 112))
+    line_y = b_title[3] + 16
+    d.line([(M, line_y), (W - M, line_y)], fill=BLACK, width=5)
 
     # 3. HERO STAT: Total Watches + Total Time
-    hero_y = title_y + 152  # 324
+    hero_y = line_y + 20
     hero_h = 220
     gap = 20
     w_left = int(BW * 0.54)
@@ -900,10 +904,14 @@ def render(data):
                     shadow_offset=(8, 8), radius=16)
 
     d.text((M + 28, hero_y + 18), "TOTAL LOGS", font=get_font("bahnschrift", 24), fill=BLACK)
-    d.text((M + 24, hero_y + 36), str(data["total"]), font=get_font("impact", 136), fill=BLACK)
-    d.text((M + 240, hero_y + 78), "WATCHES", font=get_font("impact", 48), fill=BLACK)
-    d.text((M + 242, hero_y + 134), f"{data['movies']} MOVIES · {data['episodes']} EPS",
-           font=get_font("arialb", 21), fill=BLACK)
+    tot_str = str(data["total"])
+    f_tot = get_font("impact", 136 if len(tot_str) <= 2 else (124 if len(tot_str) == 3 else 108))
+    d.text((M + 24, hero_y + 36), tot_str, font=f_tot, fill=BLACK)
+    bbox_tot = d.textbbox((M + 24, hero_y + 36), tot_str, font=f_tot)
+    watches_x = max(M + 210, bbox_tot[2] + 16)
+    d.text((watches_x, hero_y + 78), "WATCHES", font=get_font("impact", 48), fill=BLACK)
+    d.text((watches_x, hero_y + 134), f"{data['movies']} MOVIES · {data['episodes']} EPS",
+           font=get_font("arialb", 20), fill=BLACK)
 
     # Right Box: TOTAL TIME
     box_right = [M + w_left + gap, hero_y, W - M, hero_y + hero_h]

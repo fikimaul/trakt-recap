@@ -49,6 +49,12 @@ trakt-export/
 ├── assets/                   # Sample report previews for documentation
 │   ├── sample-monthly.png
 │   └── sample-yearly.png
+├── fonts/                    # Embedded open-source fonts (SIL Open Font License)
+│   ├── Anton-Regular.ttf     # Header & stat font (Impact alternative)
+│   ├── Barlow-Bold.ttf       # Title & label font (Arial Bold alternative)
+│   ├── Barlow-SemiBold.ttf   # Subtitle & badge font (Bahnschrift alternative)
+│   ├── SpaceMono-Bold.ttf    # Monospace stat font (Consolas alternative)
+│   └── LICENSE.txt           # SIL Open Font License v1.1
 ├── data/                     # Directory for extracted Trakt.tv JSON files
 │   └── .gitkeep
 ├── output/                   # Directory where generated PNG graphics are saved
@@ -65,7 +71,7 @@ trakt-export/
 
 ### 1. Requirements
 - Python 3.9 or newer.
-- Operating System: Windows (recommended for native fonts: *Impact*, *Arial Bold*, *Bahnschrift*, and *Consolas*), Linux, or macOS.
+- Operating System: Windows, Linux, or macOS (100% self-contained; all fonts are embedded with zero system font dependencies).
 
 ### 2. Clone Repository & Install Dependencies
 ```bash
