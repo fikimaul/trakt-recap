@@ -378,14 +378,35 @@ def gather(year, month=None, username=None):
     movies = [h for h in hist if h["type"] == "movie"]
     eps = [h for h in hist if h["type"] == "episode"]
 
-    # Sync TMDB cache for this period
-    m_check = [{"tmdb_id": m["movie"]["ids"].get("tmdb"), "title": m["movie"]["title"]} for m in movies]
+    # Determine previous period
+    if is_yearly:
+        prev_year = year - 1
+        prev_month = None
+    else:
+        if month == 1:
+            prev_year = year - 1
+            prev_month = 12
+        else:
+            prev_year = year
+            prev_month = month - 1
+
+    prev_hist = []
+    for h in all_history:
+        dt = to_wib(h["watched_at"])
+        if dt.year == prev_year and (prev_month is None or dt.month == prev_month):
+            prev_hist.append(h)
+
+    prev_movies = [h for h in prev_hist if h["type"] == "movie"]
+    prev_eps = [h for h in prev_hist if h["type"] == "episode"]
+
+    # Sync TMDB cache for current and previous period
+    m_check = [{"tmdb_id": m["movie"]["ids"].get("tmdb"), "title": m["movie"]["title"]} for m in movies + prev_movies]
     e_check = [{
         "show_tmdb_id": e["show"]["ids"].get("tmdb"),
         "season": e["episode"]["season"],
         "number": e["episode"]["number"],
         "show_title": e["show"]["title"]
-    } for e in eps]
+    } for e in eps + prev_eps]
     tc = sync_tmdb_runtimes(m_check, e_check)
 
     # Aggregate shows sorted by highest total runtime (grouped by show title)
@@ -566,10 +587,40 @@ def gather(year, month=None, username=None):
             "active_days": len(by_month_days[pm]),
         }
 
+    # Calculate previous period stats for +/- percentage comparison
+    prev_total_minutes = 0
+    for m in prev_movies:
+        mid = str(m["movie"]["ids"].get("tmdb"))
+        rt = tc.get("movies", {}).get(mid, {}).get("runtime") or 0
+        prev_total_minutes += rt
+
+    for e in prev_eps:
+        sid = str(e["show"]["ids"].get("tmdb"))
+        s, ep = e["episode"]["season"], e["episode"]["number"]
+        k = f"{sid}-s{s}e{ep}"
+        rt = tc.get("episodes", {}).get(k, {}).get("runtime")
+        if not rt:
+            rt = tc.get("show_avg", {}).get(sid) or 0
+        prev_total_minutes += rt
+
+    diff_logs_pct = None
+    if prev_hist:
+        diff_logs_pct = ((len(hist) - len(prev_hist)) / len(prev_hist)) * 100
+
+    diff_time_pct = None
+    if prev_total_minutes > 0:
+        diff_time_pct = ((total_minutes - prev_total_minutes) / prev_total_minutes) * 100
+
     return {
         "is_yearly": is_yearly,
         "year": year,
         "month": month,
+        "prev_year": prev_year,
+        "prev_month": prev_month,
+        "prev_total": len(prev_hist),
+        "prev_total_minutes": prev_total_minutes,
+        "diff_logs_pct": diff_logs_pct,
+        "diff_time_pct": diff_time_pct,
         "hist": hist,
         "total": len(hist),
         "movies": len(movies),
@@ -680,6 +731,38 @@ def draw_brutal_box(draw, xy, fill=WHITE_TRANSPARENT, outline=BLACK, width=BORDE
                                fill=fill, outline=outline, width=width)
     else:
         draw.rectangle([x0, y0, x1, y1], fill=fill, outline=outline, width=width)
+
+
+def draw_diff_badge(draw, right_x, top_y, pct):
+    if pct is None:
+        return
+    if abs(pct - round(pct)) < 0.05:
+        txt = f"{int(round(pct)):+d}%"
+    else:
+        txt = f"{pct:+.1f}%"
+    if pct == 0:
+        txt = "0%"
+
+    f = get_font("impact", 20)
+    tb = draw.textbbox((0, 0), txt, font=f)
+    tw = tb[2] - tb[0]
+    badge_w = max(68, tw + 20)
+    badge_h = 30
+    x1 = right_x
+    x0 = x1 - badge_w
+    y0 = top_y
+    y1 = y0 + badge_h
+
+    if pct > 0:
+        bg_col = WHITE_TRANSPARENT
+    elif pct < 0:
+        bg_col = CORAL_TRANSPARENT
+    else:
+        bg_col = WHITE_TRANSPARENT
+
+    draw_brutal_box(draw, [x0, y0, x1, y1], fill=bg_col, outline=BLACK, width=2,
+                    shadow_offset=(2, 2), radius=8)
+    draw.text((x0 + badge_w // 2, (y0 + y1) // 2), txt, font=f, fill=BLACK, anchor="mm")
 
 
 def fit_text_width(draw, text, font_name, max_size, min_size, max_w):
@@ -996,6 +1079,7 @@ def render(data):
                     shadow_offset=(8, 8), radius=16)
 
     d.text((M + 28, hero_y + 18), "TOTAL LOGS", font=get_font("bahnschrift", 24), fill=BLACK)
+    draw_diff_badge(d, right_x=M + w_left - 24, top_y=hero_y + 16, pct=data.get("diff_logs_pct"))
     tot_str = str(data["total"])
     f_tot = get_font("impact", 136 if len(tot_str) <= 2 else (124 if len(tot_str) == 3 else 108))
     d.text((M + 24, hero_y + 36), tot_str, font=f_tot, fill=BLACK)
@@ -1014,6 +1098,7 @@ def render(data):
                     shadow_offset=(8, 8), radius=16)
 
     d.text((box_right[0] + 24, hero_y + 18), "TOTAL TIME", font=get_font("bahnschrift", 24), fill=BLACK)
+    draw_diff_badge(d, right_x=W - M - 24, top_y=hero_y + 16, pct=data.get("diff_time_pct"))
     tot_min = data["total_minutes"]
     hours = tot_min // 60
     rem_min = tot_min % 60
@@ -1432,8 +1517,10 @@ def main():
         return
 
     print(f"User           : @{data['username'].lstrip('@')}")
-    print(f"Total Watches  : {data['total']} ({data['movies']} Movies, {data['episodes']} Episodes)")
-    print(f"Total Time     : {data['total_minutes'] // 60}h {data['total_minutes'] % 60}m ({data['total_minutes']:,} minutes)")
+    logs_pct_str = f" ({data['diff_logs_pct']:+.1f}% vs prev)" if data.get("diff_logs_pct") is not None else ""
+    time_pct_str = f" ({data['diff_time_pct']:+.1f}% vs prev)" if data.get("diff_time_pct") is not None else ""
+    print(f"Total Watches  : {data['total']} ({data['movies']} Movies, {data['episodes']} Episodes){logs_pct_str}")
+    print(f"Total Time     : {data['total_minutes'] // 60}h {data['total_minutes'] % 60}m ({data['total_minutes']:,} minutes){time_pct_str}")
     print(f"Active Days    : {data['active_days']} days")
     print(f"Longest Streak : {data['longest_streak']} days")
     if data["top_movies"]:
