@@ -52,6 +52,7 @@ FONT_FILES = {
     "arialb": os.path.join(FONTS_DIR, "Barlow-Bold.ttf"),
     "bahnschrift": os.path.join(FONTS_DIR, "Barlow-SemiBold.ttf"),
     "mono": os.path.join(FONTS_DIR, "SpaceMono-Bold.ttf"),
+    "symbols": os.path.join(FONTS_DIR, "DejaVuSans-Bold.ttf"),
 }
 _fcache = {}
 
@@ -357,6 +358,18 @@ def gather(year, month=None, username=None):
     # Sort from newest to oldest
     hist.sort(key=lambda x: x["watched_at"], reverse=True)
 
+    # Count total watches per movie across ALL history (rewatch detection,
+    # not limited to the current period) and find each movie's first-ever watch
+    movie_watch_counts = Counter()
+    movie_first_watch = {}
+    for h in all_history:
+        if h["type"] == "movie":
+            t = h["movie"]["title"]
+            movie_watch_counts[t] += 1
+            wa = h["watched_at"]
+            if t not in movie_first_watch or wa < movie_first_watch[t]:
+                movie_first_watch[t] = wa
+
     # Ratings
     ratings = []
     rating_patterns = ["ratings-movies-*.json", "ratings-episodes-*.json", "ratings-shows.json"]
@@ -456,8 +469,17 @@ def gather(year, month=None, username=None):
 
     # Aggregate movies sorted by highest runtime
     tc_movies = tc.get("movies", {})
+    # Earliest watch per movie title within the current period
+    period_first_watch = {}
+    for m in movies:
+        t = m["movie"]["title"]
+        wa = m["watched_at"]
+        if t not in period_first_watch or wa < period_first_watch[t]:
+            period_first_watch[t] = wa
+
     movie_runtime_list = []
     seen_movies = set()
+    rewatch_counts = {}
     for m in movies:
         t = m["movie"]["title"]
         if t in seen_movies:
@@ -469,6 +491,11 @@ def gather(year, month=None, username=None):
         rtg = movie_rating.get(t)
         tmdb_id = m["movie"]["ids"].get("tmdb")
         movie_runtime_list.append((t, rt, rtg, yr, tmdb_id))
+        n_watches = movie_watch_counts.get(t, 0)
+        # Rewatch badge only when the period's watch is a RE-watch,
+        # i.e. the movie was watched before this period (not a first watch)
+        if n_watches > 1 and to_wib(movie_first_watch[t]) < to_wib(period_first_watch[t]):
+            rewatch_counts[t] = n_watches
 
     movie_runtime_list.sort(key=lambda x: x[1], reverse=True)
     top_movies = movie_runtime_list[:5]
@@ -630,6 +657,7 @@ def gather(year, month=None, username=None):
         "longest_streak": longest_streak,
         "top_shows": top_shows,
         "top_movies": top_movies,
+        "rewatch_counts": rewatch_counts,
         "top_genres": top_genres,
         "top_countries": top_countries,
         "top_studios": top_studios,
@@ -763,6 +791,15 @@ def draw_diff_badge(draw, right_x, top_y, pct):
     draw_brutal_box(draw, [x0, y0, x1, y1], fill=bg_col, outline=BLACK, width=2,
                     shadow_offset=(2, 2), radius=8)
     draw.text((x0 + badge_w // 2, (y0 + y1) // 2), txt, font=f, fill=BLACK, anchor="mm")
+
+
+def draw_rewatch_badge(draw, x0, y0, x1, y1, bg_col=LIME_TRANSPARENT):
+    """Rewatch badge: clockwise circle arrow glyph (U+27F3) from DejaVu Sans."""
+    draw_brutal_box(draw, [x0, y0, x1, y1], fill=bg_col, outline=BLACK, width=2,
+                    shadow_offset=(3, 3), radius=8)
+    cx = (x0 + x1) // 2
+    cy = (y0 + y1) // 2
+    draw.text((cx, cy), chr(0x27F3), font=get_font("symbols", 26), fill=BLACK, anchor="mm")
 
 
 def fit_text_width(draw, text, font_name, max_size, min_size, max_w):
@@ -1146,6 +1183,8 @@ def render(data):
     pill_x0 = W - M - 24 - pill_w
     c_badge_w = 46
     c_badge_x = pill_x0 - c_badge_w - 10
+    rw_badge_w = 46
+    rw_badge_x = c_badge_x - rw_badge_w - 8
     max_label_w = c_badge_x - (M + 68) - 12
 
     if is_yearly:
@@ -1306,6 +1345,9 @@ def render(data):
         if i < len(top_m):
             m_title, m_runtime, m_rate, m_yr, m_mid = top_m[i]
 
+            # Rewatch status (watched more than once across ALL data)
+            rw_count = data.get("rewatch_counts", {}).get(m_title, 0)
+
             # 1. Rank Badge (Left)
             badge_box = [M + 24, mry, M + 24 + 32, mry + 32]
             draw_brutal_box(d, badge_box, fill=m_colors[i], outline=BLACK, width=2,
@@ -1315,10 +1357,15 @@ def render(data):
             # 2. Movie Title + (Year)
             label = f"{m_title} ({m_yr})" if m_yr else m_title
             f_lbl = get_font("arialb", 22)
-            lbl_disp = truncate_text(d, label, f_lbl, max_label_w)
+            lbl_w_limit = (rw_badge_x - (M + 68) - 12) if rw_count > 1 else max_label_w
+            lbl_disp = truncate_text(d, label, f_lbl, lbl_w_limit)
             d.text((M + 68, mry + 3), lbl_disp, font=f_lbl, fill=BLACK)
 
-            # 3. Origin Country Code Badge (if available)
+            # 3. Rewatch Badge (circular arrow icon)
+            if rw_count > 1:
+                draw_rewatch_badge(d, rw_badge_x, mry, rw_badge_x + rw_badge_w, mry + 34)
+
+            # 4. Origin Country Code Badge (if available)
             tc_meta_m = data.get("tc", {}).get("meta_movies", {})
             m_countries = tc_meta_m.get(str(m_mid), {}).get("countries", [])
             m_ccode = m_countries[0].upper() if m_countries and m_countries[0] else ""
@@ -1329,7 +1376,7 @@ def render(data):
                 d.text((c_badge_x + c_badge_w // 2, mry + 17), m_ccode,
                        font=get_font("impact", 18), fill=BLACK, anchor="mm")
 
-            # 4. Total Runtime (Right Pill)
+            # 5. Total Runtime (Right Pill)
             h = m_runtime // 60
             rem_m = m_runtime % 60
             runtime_str = f"{h}h {rem_m:02d}m"
